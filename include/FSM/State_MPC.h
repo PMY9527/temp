@@ -15,16 +15,6 @@
 #include <geometry_msgs/Vector3.h>
 
 
-static const int mpc_N = 5; // MPC 预测区间
-static const int nx = 13;    // 状态向量的维数
-static const int nu = 12;    // 控制输入的维数
-
-static const double NEGATIVE_NUMBER = -1000000.0;
-static const double POSITIVE_NUMBER = 1000000.0;
-
-static const double g = 9.8;
-static const double miu = 0.4; // friction coef.
-
 class State_MPC : public FSMState
 {
 public:
@@ -37,6 +27,7 @@ public:
     void setHighCmd(double vx, double vy, double wz);
 
 private:
+    // ************************** Publish for plotting ************************** // 
     ros::NodeHandle nh;
     ros::Publisher pub_euler = nh.advertise<geometry_msgs::Vector3>("euler_angles", 10);
     ros::Publisher pub_pos = nh.advertise<geometry_msgs::Vector3>("position", 10);
@@ -47,10 +38,21 @@ private:
     ros::Publisher pubcmd_speed = nh.advertise<geometry_msgs::Vector3>("cmd_linear_speed", 10);
 
     geometry_msgs::Vector3 msg_euler, msg_pos, msg_speed, cmd_euler, cmd_pos, cmd_speed;
+
+    // ************************** Important parameters ************************** // 
+    static const int mpc_N = 5;  // Prediction horizon
+    static const int nx = 13;    // Dimension of state vector
+    static const int nu = 12;    // Dimension of control input
+
+    static const double NEGATIVE_NUMBER = -1000000.0;
+    static const double POSITIVE_NUMBER = 1000000.0;
+
+    static const double g = 9.8;        // Gravity
+    static const double miu = 0.4;      // Friction coef.
+    static const double d_time = 0.002; // Discretization time step
     
-    double dt_actual;
-    double d_time = 0.002;
-    void calcTau();
+    // ************************** Void Functions ************************** // 
+    void calcTau(); 
     void calcQQd();
     void calcCmd();
     virtual void getUserCmd();
@@ -92,7 +94,7 @@ private:
     Vec2 _vxLim, _vyLim, _wyawLim;
     Vec4 *_phase;
     VecInt4 *_contact;
-
+    double dt_actual;
     // MPC用到的变量
     double _mass;       
     Eigen::Matrix<double, 5, 3> miuMat;
@@ -126,7 +128,6 @@ private:
     Eigen::Matrix<double, 3, 3> CrossProduct_A(Eigen::Matrix<double, 3, 1> A);
     Eigen::Matrix<double, 3, 3> Rz3(double theta);
     std::chrono::high_resolution_clock::time_point t1_prev;
-    LPFilter *_rFilter, *_pFilter;
 
     void setWeight();
     void solveQP();

@@ -1,5 +1,22 @@
 #include "FSM/State_MPC.h"
 
+/* THIS SCRIPT IS FOR MPC CONTROL OF UNITREE A1 ROBOT USING MIT CHEETAH'S SINGLE RIGID BODY MODEL. 
+    === State Vector ===    === QP Solver ===          ======= Tested Benchmarks =======
+     0. 滚转角 Φ (roll)          Quadprogpp             ~ 500 HZ at 5 Prediction Horizon 
+     1. 俯仰角 θ (pitch)                                Slope climbing at 20 degrees
+     2. 偏航角 ψ (yaw)                                  Top speed 0.5 m/s
+     3. x CoM
+     4. y CoM
+     5. z CoM
+     6. dΦ (roll rate)
+     7. dθ (pitch rate)
+     8. dψ (yaw rate)
+     9. dx CoM
+     10. dy CoM         === AUTHOR: MINGYANG PAN ===
+     11. dz CoM
+     12. -g
+*/
+
 State_MPC::State_MPC(CtrlComponents *ctrlComp)
     : FSMState(ctrlComp, FSMStateName::MPC, "mpc_quadprogpp"),
       _est(ctrlComp->estimator), _phase(ctrlComp->phase),
@@ -7,7 +24,7 @@ State_MPC::State_MPC(CtrlComponents *ctrlComp)
       _balCtrl(ctrlComp->balCtrl)
 {
     _gait = new GaitGenerator(ctrlComp); 
-    _gaitHeight = 0.08;
+    _gaitHeight = 0.08; // 抬腿高度设置 gait height setting
 
     // unitree A1 
     _Kpp = Vec3(20, 20, 100).asDiagonal(); 
@@ -30,41 +47,19 @@ State_MPC::State_MPC(CtrlComponents *ctrlComp)
              0,  0,  -1;
 
     setWeight();
-
-
 }
 
-void State_MPC::setWeight()
+void State_MPC::setWeight() // Setting up Q and R matrices for MPC.
 {
-
-    /* 状态向量 
-     1. 滚转角 Φ (roll)
-     2. 俯仰角 θ (pitch)
-     3. 偏航角 ψ (yaw)
-     4. x CoM
-     5. y CoM
-     6. z CoM
-     7. dΦ
-     8. dθ
-     9. dψ
-     10. dx CoM
-     11. dy CoM
-     12. dz CoM
-     13. -g
-     */ 
-
     Q_diag.resize(1, nx);
     R_diag.resize(1, nu);
     Q_diag.setZero();
     R_diag.setZero();
 
-    // 滚转角Φ(roll) about x, 俯仰角θ(pitch) aboout y, 偏航角ψ(yaw) about z. 
-
-    
-    Q_diag << 30.0, 30.0, 1.0, // eul, rpy
-            1.0, 1.0, 220.0, // pCoM
-            1.05, 1.05, 1.05, // w
-            20.0, 20.0, 20.0, //vcom 
+    Q_diag << 30.0, 30.0, 1.0, // r,p,y
+            1.0, 1.0, 220.0,   // pCoM
+            1.05, 1.05, 1.05,  // w
+            20.0, 20.0, 20.0,  // vcom 
             0.0;
             
     R_diag <<   1.0, 1.0, 0.1, 
@@ -101,8 +96,6 @@ void State_MPC::setWeight()
     {
         R(i, i) = R_diag_N(0, i);
     }
-    _rFilter = new LPFilter(d_time, 0.5);
-    _pFilter = new LPFilter(d_time, 0.5);
 }
 
 State_MPC::~State_MPC()
@@ -189,7 +182,7 @@ void State_MPC::run()
     auto current_time = std::chrono::high_resolution_clock::now();
     dt_actual = std::chrono::duration<double>(current_time - last_time).count();
     last_time = current_time;
-    ROS_INFO("Actual dt: %.4f s", dt_actual);
+    ROS_INFO("Actual dt: %.4f s", dt_actual); // Time for each iteration. For mpc_N = 5, dt = 1.8 ~ 2.3 ms. 
     */
 }
 
@@ -434,13 +427,13 @@ void State_MPC::calcFe()
 
 void State_MPC::ConstraintsSetup()
 {
-    /* QuadProg++求解器的约束表现形式如下：
+    /* QuadProg++ Formatting：
 
     min J = 0.5 * x' G x + g0' x
-    CE^T x + ce0 = 0 
-    CI^T x + ci0 >= 0 
+    subject to : CE^T x + ce0 = 0 
+                 CI^T x + ci0 >= 0 
 
-    The matrix and vectors dimensions are as follows:
+    Dimensions are as follows:
         G: n * n
 		g0: n * 1
 				
@@ -453,78 +446,25 @@ void State_MPC::ConstraintsSetup()
         x: n * 1
         
         n = nu * mpc_N
-        m = 
-        p = 
+        m = 3 * swingLegNum * mpc_N
+        p = 5 * contactLegNum * mpc_N
+    */
 
-        constraints: 
-
-        [ 1, 0, miu,            [fx,
-         -1, 0, miu, (fx)        
-         0,  1, miu,         *   fy,        >= 0;    触地腿，这里将摩擦锥近似成线性;
-         0, -1, miu, (fy)                            每条触地腿腿有 5 个约束
-         0,  0,  1;  (fz) ]      fz; ]
-        
-        
-        [1, 0, 0,      [fx,
-         0, 1, 0,   *   fy,  = 0；    摆动腿, 3 个约束。
-         0, 0, 1;]      fz;]                
-
-        CI':
-        [miumat(5,3),      0(5,3),    [f1(3,1),
-         0(5,3),      miumat(5,3);] *  f2(3,1);]
-
-
-        for 3 contact legs and mpc_N = 2:
-        CI' * x looks like:
-
-                        
-        [miumat(5,3),      0(5,3),  0(5,3), 0(5,3)，  /   0(5,3)，   0(5,3),   0(5,3),  0(5,3)，         [f0(3,1),            stance leg0 at k = 0  
-          0(5,3),     miumat(5,3);  0(5,3), 0(5,3)，  /   0(5,3),   0(5,3),   0(5,3),  0(5,3)，           f1(3,1),            stance leg1 at k = 0       
-          0(5,3),     0(5,3),  miumat(5,3), 0(5,3)，  /   0(5,3),  0(5,3),  0(5,3),  0(5,3)，             f2(3,1),            stance leg2 at k = 0
-                                                                                                          f3(3,1),            SWING  leg3 at k = 0      
-          ------------------------------------------------------------------------------------------------------------------------
-          0(5,3),      0(5,3),  0(5,3), 0(5,3)，   /  miumat(5,3)，0(5,3)，  0(5,3),  0(5,3),              f0(3,1),            stance leg0 at k = 1
-          0(5,3),     0(5,3);   0(5,3), 0(5,3)，   /   0(5,3), miumat(5,3)， 0(5,3),  0(5,3),              f1(3,1),            stance leg1 at k = 1       
-          0(5,3),     0(5,3),   0(5,3), 0(5,3)，  /   0(5,3), 0(5,3)， miumat(5,3),  0(5,3);]              f2(3,1),            stance leg2 at k = 1 
-                                                                                                           f3(3,1);]           SWING  leg3 at k = 1    
-    
-        CI' rows = 5 * contactLegNum * mpc_N;
-        CI' cols = nu * mpc_N;
-
-        CE' * x looks like:                                                                             
-                                                                                                       [f0(3,1),            stance leg0 at k = 0 
-                                                                                                        f1(3,1),            stance leg1 at k = 0 
-                                                                                                        f2(3,1),            stance leg2 at k = 0  
-        [ 0(3,3),     0(3,3),   0(3,3),  I3(3,3),  /  0(3,3)， 0(3,3),   0(3,3),   0(3,3),              f3(3,1),             SWING leg3 at k = 0       
-        -----------------------------------------------------------------------------------------------------------              
-          0(3,3),     0(3,3),   0(3,3),  0(3,3),  /  0(3,3)， 0(3,3),   0(3,3),   I3(3,3);]             f0(3,1),            stance leg0 at k = 1    
-                                                                                                        f1(3,1),            stance leg1 at k = 1
-                                                                                                        f2(3,1),            stance leg2 at k = 1 
-                                                                                                        f3(3,1);]           SWING  LEG3 at k = 1 /// 
-
-        CE' rows = (3 * swingLegNum) * mpc_N;
-        CE' cols = nu * mpc_N;
-                                                                                                
-          dimension of CI': (5 * contactLegNum * mpc_N, nu * mpc_N)
-          dimension of F:   (nu * mpc_N, 1)
-          dimension of CE': (3 * swingLegNum * mpc_N, nu * mpc_N)
-        
-
-     */
     int contactLegNum = 0;
     int swingLegNum = 0;
+
     for (int i = 0; i < 4; ++i)
     {
         if ((*_contact)(i) == 1)
         {
-            contactLegNum += 1;  
+            contactLegNum += 1;   
         } else {
             swingLegNum += 1;
         }
     }
 
-    CI_.resize(5 * contactLegNum * mpc_N, nu * mpc_N); // CI'
-    CE_.resize(3 * swingLegNum * mpc_N, nu * mpc_N); // CE'
+    CI_.resize(5 * contactLegNum * mpc_N, nu * mpc_N); // CI^T
+    CE_.resize(3 * swingLegNum * mpc_N, nu * mpc_N);   // CE^T
     ci0_.resize(5 * contactLegNum * mpc_N, 1);
     ce0_.resize(3 * swingLegNum * mpc_N, 1);
 
