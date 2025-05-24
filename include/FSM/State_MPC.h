@@ -51,12 +51,19 @@ private:
     static const double miu = 0.4;      // Friction coef.
     static const double d_time = 0.002; // Discretization time step
     
-    // ************************** Void Functions ************************** // 
+    // ************************** Important parameters ************************** // 
+    void setWeight();
+    virtual void getUserCmd();
+    void calcCmd();
+
     void calcTau(); 
     void calcQQd();
-    void calcCmd();
-    virtual void getUserCmd();
+
+    void SetMatrices();
+    void ConstraintsSetup();
+    void solveQP();
     void calcFe();
+    void Publishing();
 
     GaitGenerator *_gait;
     Estimator *_est;
@@ -110,7 +117,7 @@ private:
     Eigen::Matrix<double, nx * mpc_N, nu> Bd_list;
     Eigen::MatrixXd Bqp, x_vec, prediction_X;
     Eigen::MatrixXd dense_hessian;
-    Eigen::Matrix<double, nu * mpc_N, 1> gradient, Fqp; // q
+    Eigen::Matrix<double, nu * mpc_N, 1> gradient; // q
     Eigen::MatrixXd Q_diag;
     Eigen::MatrixXd R_diag;
     Eigen::MatrixXd Q_diag_N;
@@ -128,10 +135,6 @@ private:
     Eigen::Matrix<double, 3, 3> CrossProduct_A(Eigen::Matrix<double, 3, 1> A);
     Eigen::Matrix<double, 3, 3> Rz3(double theta);
     std::chrono::high_resolution_clock::time_point t1_prev;
-
-    void setWeight();
-    void solveQP();
-    void ConstraintsSetup();
 };
 
 #endif // MPC_H

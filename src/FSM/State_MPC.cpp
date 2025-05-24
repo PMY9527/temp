@@ -1,10 +1,10 @@
 #include "FSM/State_MPC.h"
 
 /* THIS SCRIPT IS FOR MPC CONTROL OF UNITREE A1 ROBOT USING MIT CHEETAH'S SINGLE RIGID BODY MODEL. 
-    === State Vector ===    === QP Solver ===          ======= Tested Benchmarks =======
-     0. 滚转角 Φ (roll)          Quadprogpp             ~ 500 HZ at 5 Prediction Horizon 
-     1. 俯仰角 θ (pitch)                                Slope climbing at 20 degrees
-     2. 偏航角 ψ (yaw)                                  Top speed 0.5 m/s
+    === State Vector ===    === QP Solver ===          ======= Tested Benchmarks (Gazebo)======= 
+     0. 滚转角 Φ (roll)          Quadprogpp                 ~ 500 HZ at 5 Prediction Horizon 
+     1. 俯仰角 θ (pitch)                                        Slope climbing at 20 degrees
+     2. 偏航角 ψ (yaw)                                                Top speed 0.5 m/s
      3. x CoM
      4. y CoM
      5. z CoM
@@ -161,11 +161,13 @@ void State_MPC::run()
 
     calcTau();
     calcQQd(); // q and qd
+    Publishing();
+
     _ctrlComp->setStartWave();
     _lowCmd->setTau(_tau);
     _lowCmd->setQ(vec34ToVec12(_qGoal));
     _lowCmd->setQd(vec34ToVec12(_qdGoal));
-
+    
     for (int i(0); i < 4; ++i)
     {
         if ((*_contact)(i) == 0)
@@ -182,7 +184,7 @@ void State_MPC::run()
     auto current_time = std::chrono::high_resolution_clock::now();
     dt_actual = std::chrono::duration<double>(current_time - last_time).count();
     last_time = current_time;
-    ROS_INFO("Actual dt: %.4f s", dt_actual); // Time for each iteration. For mpc_N = 5, dt = 1.8 ~ 2.3 ms. 
+    ROS_INFO("Actual dt: %.4f s", dt_actual); // Benchmarking -- time for each iteration. For mpc_N = 5, dt = 1.8 ~ 2.3 ms. 
     */
 }
 
@@ -197,8 +199,7 @@ void State_MPC::setHighCmd(double vx, double vy, double wz)
 void State_MPC::getUserCmd()
 {
     /* Movement */
-    _vCmdBody(0) = invNormalize(_userValue.ly, -0.5, 0.5);
-    //_vCmdBody(0) = invNormalize(_userValue.ly, _vxLim(0), _vxLim(1)); // +_0.4
+    _vCmdBody(0) = invNormalize(_userValue.ly, _vxLim(0), _vxLim(1)); // +_0.4
     _vCmdBody(1) = -invNormalize(_userValue.lx, _vyLim(0), _vyLim(1));
     _vCmdBody(2) = 0;
 
@@ -208,7 +209,7 @@ void State_MPC::getUserCmd()
     _dYawCmdPast = _dYawCmd;
 }
 
-void State_MPC::calcCmd()
+void State_MPC::calcCmd() 
 {
     /* Movement */
     _vCmdGlobal = _B2G_RotMat * _vCmdBody;
@@ -228,27 +229,20 @@ void State_MPC::calcCmd()
     _wCmdGlobal(2) = _dYawCmd;
 }
 
-void State_MPC::calcTau()
+void State_MPC::calcTau() // Calculate joint torques based on contact forces solved via MPC. 
 {
     calcFe();
     
-    
-    //for (int i = 0; i < 4; ++i) {
-    //   std::cout << (*_contact)(i) << " ";
-    //}
     //std::cout << "********forceFeetGlobal(MPC)********" << std::endl
     //         << _forceFeetGlobal << std::endl;
     
     for (int i(0); i < 4; ++i)
     {
-        if ((*_contact)(i) == 0) // 摆动腿
+        if ((*_contact)(i) == 0) // Swing Legs
         { 
             _forceFeetGlobal.col(i) = _KpSwing * (_posFeetGlobalGoal.col(i) - _posFeetGlobal.col(i)) + _KdSwing * (_velFeetGlobalGoal.col(i) - _velFeetGlobal.col(i));
         }
     }
-    
-    //std::cout << std::endl;
-
 
     _forceFeetBody = _G2B_RotMat * _forceFeetGlobal;
     _q = vec34ToVec12(_lowState->getQ());
@@ -256,7 +250,7 @@ void State_MPC::calcTau()
 
 }
 
-void State_MPC::calcQQd()
+void State_MPC::calcQQd() // Desired joint angles and angular velocities. 
 {
 
     Vec34 _posFeet2B;
@@ -273,58 +267,25 @@ void State_MPC::calcQQd()
 }
 
 #undef inverse
-void State_MPC::calcFe()
+
+void State_MPC::SetMatrices() // Setting up Hessian, G and Gradient, g0. 
 {
+    /*
+    Computes desired states vector Xd, across the prediction horizon;
+    Computes the system dynamics matrices Aqp and Bqp, across the prediction horizon;
 
+    */
     current_euler = _G2B_RotMat.eulerAngles(0, 1, 2);
-
-    _rFilter->addValue(current_euler(0));
-    _pFilter->addValue(current_euler(1));
-
-    roll = _rFilter->getValue();
-    pitch = _pFilter->getValue();
     
-    // 当前状态：欧拉角、机身位置、角速度、机身速度
     //currentStates << 0.0, 0.0, _yaw, _posBody, _lowState->getGyroGlobal(), _velBody, -g;
     currentStates << current_euler, _posBody, _lowState->getGyroGlobal(), _velBody, -g;
-
-    msg_euler.x = roll; // Roll
-    msg_euler.y = pitch; // Pitch
-    msg_euler.z = _yaw; // Yaw
-    pub_euler.publish(msg_euler);
-
-    msg_pos.x = currentStates(3); // x
-    msg_pos.y = currentStates(4); // y
-    msg_pos.z = currentStates(5); // z
-    pub_pos.publish(msg_pos);
-
-    msg_speed.x  = currentStates(9); // vx
-    msg_speed.y = currentStates(10); // vy
-    msg_speed.z = currentStates(11); // vz
-    pub_speed.publish(msg_speed);
 
     //std::cout << "_pcd" << std::endl 
        //       << _pcd << std::endl;
     //std::cout << "_posBody" << std::endl 
               //<< _posBody << std::endl;
 
-
-    cmd_euler.x = _dYaw;
-    cmd_euler.y = _dYawCmd;
-    cmd_euler.z = _yawCmd;
-    pubcmd_euler.publish(cmd_euler);
-
-    cmd_pos.x = _pcd(0);
-    cmd_pos.y = _pcd(1);
-    cmd_pos.z = _pcd(2);
-    pubcmd_pos.publish(cmd_pos);
-  
-    cmd_speed.x = _vCmdGlobal(0);
-    cmd_speed.y = _vCmdGlobal(1);
-    cmd_speed.z = _vCmdGlobal(2);
-    pubcmd_speed.publish(cmd_speed);
-
-    // 设置期望状态 Xd
+    // Desired States
     for (int i = 0; i < (mpc_N - 1); i++)
         Xd.block<nx, 1>(nx * i, 0) = Xd.block<nx, 1>(nx * (i + 1), 0);
         Xd(nx * (mpc_N - 1) + 2) = _yawCmd;
@@ -335,9 +296,7 @@ void State_MPC::calcFe()
     for (int j = 0; j < 3; j++)
         Xd(nx * (mpc_N - 1) + 9 + j) = _vCmdGlobal(j);
 
-    
-
-    // 单刚体动力学假设下的 Ac 和 Bc (continuous) 矩阵
+    // 单刚体动力学假设下的 Ac 和 Bc 矩阵
     // Ac
     Ac.setZero();
     R_curz = Rz3(_yaw);
@@ -357,14 +316,12 @@ void State_MPC::calcFe()
                 (1 / _mass) * I3;
     }
 
-    // 通过 Ad = I + Ac * dt，Bd = Bc * dt 对 Ac，Bc 进行离散化
+    // Ad = I + Ac * dt，Bd = Bc * dt
     Ad.setZero();
     Bd.setZero();
 
     Ad = Eigen::Matrix<double, nx, nx>::Identity() + Ac * d_time;
     Bd = Bc * d_time;
-
-    // 构造 MPC 预测时域内的 QP
 
     // Aqp = [  A,
     //         A^2,
@@ -412,44 +369,50 @@ void State_MPC::calcFe()
     dense_hessian = (Bqp.transpose() * Q * Bqp); 
     dense_hessian += R;
     dense_hessian = dense_hessian * 2;
-
+    
     gradient.setZero();
     
-    Eigen::Matrix<double, nx * mpc_N, 1> error = Aqp * currentStates;
-    error -= Xd;
+    Eigen::Matrix<double, nx * mpc_N, 1> error_ish = Aqp * currentStates;
+    error_ish -= Xd;
     gradient = 2 * error.transpose() * Q * Bqp;
-    
-    ConstraintsSetup();
-    solveQP();
-    _forceFeetGlobal = vec12ToVec34(F_);
 
 }
 
-void State_MPC::ConstraintsSetup()
+void State_MPC::Publishing() // States Publishing: rosbag record -a  ---> plotjuggler.
 {
-    /* QuadProg++ Formatting：
+    msg_euler.x = currentStates(0); // Roll
+    msg_euler.y = currentStates(1); // Pitch
+    msg_euler.z = currentStates(2); // Yaw
+    pub_euler.publish(msg_euler);
 
-    min J = 0.5 * x' G x + g0' x
-    subject to : CE^T x + ce0 = 0 
-                 CI^T x + ci0 >= 0 
+    msg_pos.x = currentStates(3); // x
+    msg_pos.y = currentStates(4); // y
+    msg_pos.z = currentStates(5); // z
+    pub_pos.publish(msg_pos);
 
-    Dimensions are as follows:
-        G: n * n
-		g0: n * 1
-				
-		CE: n * p
-	    ce0: p * 1
-				
-	    CI: n * m
-        ci0: m * 1
+    msg_speed.x  = currentStates(9); // vx
+    msg_speed.y = currentStates(10); // vy
+    msg_speed.z = currentStates(11); // vz
+    pub_speed.publish(msg_speed);
 
-        x: n * 1
-        
-        n = nu * mpc_N
-        m = 3 * swingLegNum * mpc_N
-        p = 5 * contactLegNum * mpc_N
-    */
+    cmd_euler.x = _dYaw;
+    cmd_euler.y = _dYawCmd;
+    cmd_euler.z = _yawCmd;
+    pubcmd_euler.publish(cmd_euler);
 
+    cmd_pos.x = _pcd(0);
+    cmd_pos.y = _pcd(1);
+    cmd_pos.z = _pcd(2);
+    pubcmd_pos.publish(cmd_pos);
+  
+    cmd_speed.x = _vCmdGlobal(0);
+    cmd_speed.y = _vCmdGlobal(1);
+    cmd_speed.z = _vCmdGlobal(2);
+    pubcmd_speed.publish(cmd_speed);
+}
+
+void State_MPC::ConstraintsSetup() // Setting up the constraint matrices for the QP solver.
+{
     int contactLegNum = 0;
     int swingLegNum = 0;
 
@@ -504,9 +467,36 @@ void State_MPC::ConstraintsSetup()
     }
 }
 
+void State_MPC::calcFe()
+{   
+    SetMatrices();
+    ConstraintsSetup();
+    solveQP();
+    _forceFeetGlobal = vec12ToVec34(F_);
 
-void State_MPC::solveQP()
+}
+
+void State_MPC::solveQP() // Convert the formulation to the QP solver and output the contact forces.
 {
+    /* QuadProg++ Formatting：
+
+    min J = 0.5 * x' G x + g0' x
+    subject to : CE^T x + ce0 = 0 
+                 CI^T x + ci0 >= 0 
+
+    Dimensions are as follows:              n = nu * mpc_N                   
+        G: n * n                            m = 3 * swingLegNum * mpc_N
+		g0: n * 1                           p = 5 * contactLegNum * mpc_N    
+                            
+		CE: n * p
+	    ce0: p * 1
+				
+	    CI: n * m
+        ci0: m * 1
+
+        x: n * 1
+    */
+
     int n = nu * mpc_N;
     int m = ce0_.size(); // 3 * swingLegNum * mpc_N
     int p = ci0_.size(); // 5 * contactLegNum * mpc_N
@@ -551,7 +541,7 @@ void State_MPC::solveQP()
 
     for (int i = 0; i < n; ++i)
     {
-        g0[i] = (gradient)[i];
+        g0[i] = gradient[i];
     }
 
     for (int i = 0; i < m; ++i)
@@ -577,13 +567,11 @@ void State_MPC::solveQP()
     // J = X^T Q X + U^T R U 
     prediction_X = Aqp * currentStates + Bqp * x_vec - Xd;    
     double cost_func = (prediction_X.transpose() * Q * prediction_X + x_vec.transpose() * R * x_vec).value();
-   
     std::cout << "cost:" << cost_func << std::endl;
-
     
     for (int i = 0; i < 12; ++i)
     {
-        F_[i] = -x[i]; 
+        F_[i] = -x[i];  
     }
     
 }
