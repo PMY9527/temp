@@ -148,6 +148,7 @@ void State_MPC::run()
     _velFeetGlobal = _est->getFeetVel();
     _B2G_RotMat = _lowState->getRotMat();
     _G2B_RotMat = _B2G_RotMat.transpose();
+    _rpy =_lowState->getRPY();
     _yaw = _lowState->getYaw();
     _dYaw = _lowState->getDYaw();
     
@@ -159,9 +160,8 @@ void State_MPC::run()
     _gait->setGait(_vCmdGlobal.segment(0, 2), _wCmdGlobal(2), _gaitHeight);
     _gait->run(_posFeetGlobalGoal, _velFeetGlobalGoal);
 
-    calcTau();
+    calcTau();  // SetMatrices() --> Publishing() --> ConstraintsSetup() --> solveQP() --> calcFe() --> calcTau()
     calcQQd(); // q and qd
-    Publishing();
 
     _ctrlComp->setStartWave();
     _lowCmd->setTau(_tau);
@@ -275,10 +275,10 @@ void State_MPC::SetMatrices() // Setting up Hessian, G and Gradient, g0.
     Computes the system dynamics matrices Aqp and Bqp, across the prediction horizon;
 
     */
-    current_euler = _G2B_RotMat.eulerAngles(0, 1, 2);
+    //current_euler = _G2B_RotMat.eulerAngles(0, 1, 2);
     
     //currentStates << 0.0, 0.0, _yaw, _posBody, _lowState->getGyroGlobal(), _velBody, -g;
-    currentStates << current_euler, _posBody, _lowState->getGyroGlobal(), _velBody, -g;
+    currentStates << _rpy, _posBody, _lowState->getGyroGlobal(), _velBody, -g;
 
     //std::cout << "_pcd" << std::endl 
        //       << _pcd << std::endl;
@@ -369,7 +369,7 @@ void State_MPC::SetMatrices() // Setting up Hessian, G and Gradient, g0.
     dense_hessian = (Bqp.transpose() * Q * Bqp); 
     dense_hessian += R;
     dense_hessian = dense_hessian * 2;
-    
+
     gradient.setZero();
     
     Eigen::Matrix<double, nx * mpc_N, 1> error_ish = Aqp * currentStates;
@@ -470,6 +470,7 @@ void State_MPC::ConstraintsSetup() // Setting up the constraint matrices for the
 void State_MPC::calcFe()
 {   
     SetMatrices();
+    Publishing();
     ConstraintsSetup();
     solveQP();
     _forceFeetGlobal = vec12ToVec34(F_);

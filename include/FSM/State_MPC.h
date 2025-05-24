@@ -71,8 +71,8 @@ private:
     BalanceCtrl *_balCtrl;
 
     // Rob State
-    Vec3 _posBody, _velBody;
-    double _yaw, _dYaw, roll, pitch;
+    Vec3 _posBody, _velBody, _rpy;
+    double _yaw, _dYaw;
     Vec34 _posFeetGlobal, _velFeetGlobal;
     Vec34 _posFeet2BGlobal;
     RotMat _B2G_RotMat, _G2B_RotMat;
@@ -134,7 +134,6 @@ private:
 
     Eigen::Matrix<double, 3, 3> CrossProduct_A(Eigen::Matrix<double, 3, 1> A);
     Eigen::Matrix<double, 3, 3> Rz3(double theta);
-    std::chrono::high_resolution_clock::time_point t1_prev;
 };
 
 #endif // MPC_H
